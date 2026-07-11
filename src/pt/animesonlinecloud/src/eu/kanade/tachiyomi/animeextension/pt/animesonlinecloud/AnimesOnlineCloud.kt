@@ -102,7 +102,22 @@ class AnimesOnlineCloud :
             }
         }
     }
+    // ============================ Episodes =============================
 
+    override fun episodeListSelector() = ".episodios-grid > .episode-card"
+
+    override fun episodeFromElement(element: Element, seasonName: String): SEpisode {
+        return SEpisode.create().apply {
+            val href = element.selectFirst(".episode-info a")!!
+            val episodeName = href.ownText().substringAfter(" - ")
+            val epNum = element.attr("data-episode-number")
+            episode_number = epNum.toFloatOrNull() ?: 0F
+            date_upload = 0L
+            name = "$episodeSeasonPrefix $seasonName x $epNum - $episodeName"
+            setUrlWithoutDomain(href.attr("href"))
+        }
+    }
+    
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
