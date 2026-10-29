@@ -5,12 +5,11 @@ import eu.kanade.tachiyomi.animeextension.pt.animesonlinecloud.extractors.Univer
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.annotation.Source
-import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
@@ -67,7 +66,7 @@ abstract class AnimesOnlineCloud : DooPlay() {
         ?: ""
 
     fun Document.getAlternativeTitle(): String = select("$additionalInfoSelector p")
-        .first { it.text().contains("Título Alternativo") }
+        .firstOrNull { it.text().contains("Título Alternativo") }
         ?.let { it.text() + "\n" }
         ?: ""
 
@@ -100,45 +99,55 @@ abstract class AnimesOnlineCloud : DooPlay() {
         }
     }
 
+    // ============================== Episodes ==============================
+    override fun episodeListSelector(): String = ".episodios-grid > .episode-card"
+
+    override fun episodeFromElement(element: Element, seasonName: String): SEpisode = SEpisode.create().apply {
+        val epTitle = element.selectFirst(".episode-title")!!
+        val href = epTitle.selectFirst("a[href]")!!
+        val episodeName = href.ownText()
+        episode_number = episodeName.substringBefore(" - ").toFloatOrNull() ?: 0F
+        name = "$episodeSeasonPrefix $seasonName x $episodeName"
+        setUrlWithoutDomain(href.attr("href"))
+    }
+
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
-        val players = document.select("ul#playeroptionsul li")
-        return players.parallelCatchingFlatMapBlocking(::getPlayerVideos)
+        val players = document.select(".animeq-player__video, .animeq-player__iframe").withIndex().toList()
+        val qualities = document.select(".animeq-player__servers button")
+        return players.parallelCatchingFlatMapBlocking { (index, element) ->
+            getPlayerVideos(element, qualities[index])
+        }
     }
 
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
 
-    private suspend fun getPlayerVideos(player: Element): List<Video> {
-        val name = player.selectFirst("span.title")!!.text()
+    private suspend fun getPlayerVideos(player: Element, quality: Element): List<Video> {
+        val name = quality.selectFirst("span:last-child")!!.text()
             .run {
                 when (this.uppercase()) {
                     "SD" -> "360p"
                     "HD" -> "720p"
-                    "SD/HD", "SD / HD" -> "720p"
+                    "SD/HD", "SD / HD", "MOBILE / CELULAR" -> "720p"
                     "FHD", "FULLHD", "FULLHD / HLS" -> "1080p"
                     else -> this
                 }
             }
 
-        val url = getPlayerUrl(player)
+        val url = getPlayerUrl(player) ?: return emptyList()
 
         val videos = when {
             "blogger.com" in url -> bloggerExtractor.videosFromUrl(url, headers)
 
-            "jwplayer?source=" in url -> {
-                val videoUrl = url.toHttpUrl().queryParameter("source") ?: return emptyList()
-
+            "video" in player.tagName() -> {
                 val videoHeaders = headers.newBuilder()
-                    .add("Accept", "*/*")
-                    .add("Host", videoUrl.toHttpUrl().host)
-                    .add("Origin", "https://${url.toHttpUrl().host}")
-                    .add("Referer", "https://${url.toHttpUrl().host}/")
+                    .set("Referer", "https://${baseUrl.toHttpUrl().host}/")
                     .build()
 
                 return listOf(
-                    Video(videoUrl, name, videoUrl, videoHeaders),
+                    Video(videoTitle = name, videoUrl = url, headers = videoHeaders),
                 )
             }
 
@@ -151,15 +160,10 @@ abstract class AnimesOnlineCloud : DooPlay() {
         return videos
     }
 
-    private suspend fun getPlayerUrl(player: Element): String {
-        val type = player.attr("data-type")
-        val id = player.attr("data-post")
-        val num = player.attr("data-nume")
-        return client.newCall(GET("$baseUrl/wp-json/dooplayer/v2/$id/$type/$num"))
-            .awaitSuccess().bodyString()
-            .substringAfter("\"embed_url\":\"")
-            .substringBefore("\",")
-            .replace("\\", "")
+    private fun getPlayerUrl(player: Element): String? = when (player.tagName()) {
+        "iframe" -> player.attr("src")
+        "video" -> player.selectFirst("source")?.attr("src")
+        else -> null
     }
 
     // ============================== Filters ===============================
@@ -254,6 +258,8 @@ abstract class AnimesOnlineCloud : DooPlay() {
         )
 
     // ============================= Utilities ==============================
+    override val animeMenuSelector = ".pag_episodes .aq-nav-icon:has(.fa-list)"
+
     override fun List<Video>.sortVideos(): List<Video> {
         val quality = preferences.getString(videoSortPrefKey, videoSortPrefDefault)!!
 
