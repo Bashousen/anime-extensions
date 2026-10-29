@@ -20,7 +20,7 @@ abstract class AnimesOnlineCC : DooPlay() {
     // ============================== Popular ===============================
     override fun popularAnimeSelector() = "article.w_item_b > a"
 
-    override fun popularAnimeRequest(page: Int) = GET(baseUrl, headers)
+    override fun popularAnimeRequest(page: Int) = latestUpdatesRequest(page)
 
     // =============================== Latest ===============================
     override fun latestUpdatesNextPageSelector() = "div.pagination > a.arrow_pag > i.icon-caret-right"
