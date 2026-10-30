@@ -4,7 +4,7 @@ plugins {
 
 yuzono {
     name = "DattebayoBR"
-    versionCode = 1
+    versionCode = 2
     contentWarning = ContentWarning.SAFE
     libVersion = "14"
 
