@@ -4,6 +4,7 @@ import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
@@ -50,6 +51,23 @@ abstract class AnimesOnlineCC : DooPlay() {
 
             description = doc.getDescription()
         }
+    }
+
+    override fun episodeFromElement(element: Element, seasonName: String): SEpisode = SEpisode.create().apply {
+        val epNum = element.selectFirst("div.numerando")!!.text()
+            .trim()
+            .let(episodeNumberRegex::find)
+            ?.groupValues
+            ?.last() ?: "0"
+        val href = element.selectFirst("a[href]")!!
+        val episodeName = href.ownText()
+        episode_number = epNum.toFloatOrNull() ?: 0F
+        date_upload = element.selectFirst(episodeDateSelector)
+            ?.text()
+            ?.toDate() ?: 0L
+        name = "$episodeSeasonPrefix $seasonName x $epNum - $episodeName"
+        scanlator = "$episodeSeasonPrefix $seasonName"
+        setUrlWithoutDomain(href.attr("href"))
     }
 
     // ============================ Video Links =============================
