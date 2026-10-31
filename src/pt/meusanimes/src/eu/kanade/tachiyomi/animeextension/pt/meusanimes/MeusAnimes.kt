@@ -67,7 +67,8 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
                 thumbnail_url = element.selectFirst(".aniImg img")
                     ?.attr("abs:src")
                     ?: ""
-                initialized = true
+
+                initialized = false
             }
         }
 
