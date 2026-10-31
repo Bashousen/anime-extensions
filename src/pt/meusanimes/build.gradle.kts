@@ -4,7 +4,7 @@ plugins {
 
 yuzono {
     name = "Meus Animes"
-    versionCode = 1
+    versionCode = 2
     contentWarning = ContentWarning.NSFW
     libVersion = "14"
 
@@ -15,5 +15,7 @@ yuzono {
 }
 
 dependencies {
-    implementation(project(":lib:bloggerextractor"))
+    implementation(project(":lib:unpacker"))
+    implementation(project(":lib:playlistutils"))
+    implementation(project(":lib:m3u8server"))
 }

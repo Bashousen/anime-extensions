@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.meusanimes
 
-import aniyomi.lib.bloggerextractor.BloggerExtractor
+import eu.kanade.tachiyomi.animeextension.pt.meusanimes.extractors.MeusAnimesExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -10,9 +10,8 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
-import keiyoushi.utils.bodyString
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
-import kotlinx.coroutines.runBlocking
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -155,61 +154,29 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
 
     // Parse video list from episode page
     override fun videoListParse(response: Response): List<Video> {
-        val html = response.bodyString()
-        val videoList = mutableListOf<Video>()
-        val extractor = BloggerExtractor(client)
+        val meusAnimesExtractor by lazy { MeusAnimesExtractor(client, headers) }
+        val m3u8Integration by lazy { M3u8Integration(client) }
 
-        // 1. Clean HTML: remove JSON escapes for cleaner URLs
-        val cleanHtml = html.replace("\\/", "/")
-            .replace("\\u0026", "&")
+        val document = response.asJsoup()
+        val players = document.select(".abaPlayer")
 
-        val browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0"
-        val googleHeaders = headersBuilder()
-            .set("User-Agent", browserUserAgent)
-            .set("Referer", "https://youtube.googleapis.com/")
-            .build()
+        val videos = when {
+            players.isEmpty() -> {
+                val url = document.selectFirst("iframe")?.attr("src") ?: return emptyList()
+                meusAnimesExtractor.getVideosFromUrl(url, "Video")
+            }
 
-        // 2. Enhanced regex to capture links anywhere in JSON
-        val legRegex = """player_leg"\s*:\s*"([^"]+)""".toRegex()
-        val dubRegex = """player_dub"\s*:\s*"([^"]+)""".toRegex()
+            else -> {
+                players.parallelCatchingFlatMapBlocking { player ->
+                    val url = player.attr("data-url").ifEmpty { return@parallelCatchingFlatMapBlocking emptyList() }
+                    val prefix = player.text().lowercase().replaceFirstChar { it.uppercase() }
 
-        val legMatch = legRegex.find(cleanHtml)?.groupValues?.get(1)
-        val dubMatch = dubRegex.find(cleanHtml)?.groupValues?.get(1)
-
-        // Helper function to add videos from URL
-        fun addVideos(url: String, prefix: String) {
-            if (url.isEmpty() || !url.contains("blogger.com")) return
-
-            runCatching {
-                runBlocking { extractor.videosFromUrl(url, googleHeaders) }
-                    .forEach { video ->
-                        videoList.add(
-                            Video(
-                                video.videoUrl,
-                                "$prefix: ${video.videoTitle}",
-                                video.videoUrl,
-                                googleHeaders,
-                            ),
-                        )
-                    }
+                    meusAnimesExtractor.getVideosFromUrl(url, prefix)
+                }
             }
         }
 
-        // Process Legendado (subtitled) and Dublado (dubbed) streams
-        legMatch?.let { addVideos(it, "Legendado") }
-        dubMatch?.let { addVideos(it, "Dublado") }
-
-        // 3. Fallback: if keys change, try to capture any loose blogger links
-        if (videoList.isEmpty()) {
-            val fallbackRegex = """https?://www\.blogger\.com/video\.g\?token=[a-zA-Z0-9_-]+""".toRegex()
-            fallbackRegex.findAll(cleanHtml)
-                .map { it.value }
-                .distinct()
-                .take(2)
-                .forEach { addVideos(it, "Player") }
-        }
-
-        return videoList
+        return m3u8Integration.processVideoList(videos)
     }
 
     // Utilities
@@ -229,10 +196,8 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
 
     private fun getRealAnimeDoc(document: Document): Document {
         val menu = document.selectFirst(animeMenuSelector)
-        println("porra getRealAnimeDoc")
         return if (menu != null) {
             val animeUrl = menu.parent()!!.attr("abs:href")
-            println("porra getRealAnimeDoc animeUrl")
             val req = client.newCall(GET(animeUrl, headers)).execute()
             req.asJsoup()
         } else {
