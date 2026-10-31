@@ -104,141 +104,24 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
     // No filters implemented
     override fun getFilterList(): AnimeFilterList = AnimeFilterList()
 
-    // Anime Details: Extract anime data from script tag in page
-    private fun extractAnimeData(document: Document): JSONObject? {
-        return runCatching {
-            val scriptContent = document.select("script")
-                .map { it.data() }
-                .firstOrNull { it.contains("animeData") }
-                ?: return null
-
-            val startToken = "\\\"animeData\\\":{"
-            val startIdx = scriptContent.indexOf(startToken)
-            if (startIdx == -1) return null
-
-            val jsonStart = startIdx + startToken.length - 1
-            val endIdx = scriptContent.indexOf("]}", jsonStart) + 2
-
-            val fragment = scriptContent.substring(jsonStart, endIdx)
-
-            val cleanedJson = fragment
-                .replace("\\\"", "\"")
-                .replace("\\\\", "\\")
-
-            JSONObject(cleanedJson)
-        }.getOrNull()
-    }
-
-    // Parse core anime data from JSON
-    private fun parseAnimeCore(json: JSONObject): CoreAnimeData {
-        val title = json.optString("name")
-
-        val altTitle = json.optString("nameOriginal")
-            .takeIf { it.isNotBlank() }
-
-        val description = json.optString("sinopse")
-            .trim()
-            .ifBlank { "Sinopse não disponível." }
-
-        val status = when {
-            json.optString("diaLancamento").isNotBlank() ->
-                SAnime.ONGOING
-            json.optInt("episodios") > 0 ->
-                SAnime.COMPLETED
-            else ->
-                SAnime.UNKNOWN
-        }
-
-        return CoreAnimeData(
-            title = title,
-            altTitle = altTitle,
-            description = description,
-            status = status,
-        )
-    }
-
-    // Fallback: parse anime details from meta tags
-    private fun parseAnimeFromMeta(document: Document): SAnime = SAnime.create().apply {
-        title = document.select("meta[property=og:title]").attr("content")
-        description = document.select("meta[name=description]").attr("content")
-        thumbnail_url = document.select("meta[property=og:image]").attr("content")
-        initialized = true
-    }
-
-    // Data class for core anime information
-    private data class CoreAnimeData(
-        val title: String,
-        val altTitle: String?,
-        val description: String,
-        val status: Int,
-    )
-
     // Main anime details parser
     override fun animeDetailsParse(response: Response): SAnime {
-        val document = response.useAsJsoup()
-        val json = extractAnimeData(document)
-            ?: return parseAnimeFromMeta(document)
-
-        val core = parseAnimeCore(json)
+        val document = getRealAnimeDoc(response.asJsoup())
 
         return SAnime.create().apply {
-            title = core.title
-            artist = core.altTitle
-            description = core.description
-            status = core.status
+            title = document.selectFirst(".anime_titulo")!!.text()
+            description = document.selectFirst("#sinopse_content")?.text()
+            thumbnail_url = document.selectFirst(".anime_thumb_left > img")?.attr("src")
 
-            thumbnail_url = json.optString("poster")
-                .takeIf { it.isNotBlank() }
-                ?.let { "https://image.tmdb.org/t/p/w500$it" }
-                ?: document.select("meta[property=og:image]").attr("content")
+            val statusString = document.selectFirst(".anime_status > span:last-child")?.text()
+            status = when (statusString?.lowercase()) {
+                "completo" -> SAnime.COMPLETED
+                "em lançamento" -> SAnime.ONGOING
+                else -> SAnime.UNKNOWN
+            }
 
             initialized = true
         }
-    }
-
-    // Alternative JSON parser (not used in current implementation)
-    private fun parseAnimeFromJson(
-        json: JSONObject,
-        document: Document,
-    ): SAnime = SAnime.create().apply {
-        title = json.optString("name")
-
-        // Studio
-        author = json.optJSONObject("Studio")
-            ?.optString("name")
-
-        // Original title goes to "artist" field (Tachiyomi standard)
-        artist = json.optString("nameOriginal").takeIf { it.isNotBlank() }
-
-        val year = json.optInt("ano").takeIf { it > 0 }
-        val synopsis = json.optString("sinopse")
-
-        description = buildString {
-            if (year != null) append("Ano: $year\n\n")
-            append(synopsis)
-        }
-
-        genre = json.optJSONArray("Animegenero")
-            ?.let { arr ->
-                (0 until arr.length()).mapNotNull { i ->
-                    arr.getJSONObject(i)
-                        .optJSONObject("Genero")
-                        ?.optString("name")
-                }.joinToString(", ")
-            }
-
-        status = when (json.optString("status").lowercase()) {
-            "ended", "finalizado", "completo" -> SAnime.COMPLETED
-            "releasing", "em lançamento", "andamento" -> SAnime.ONGOING
-            else -> SAnime.UNKNOWN
-        }
-
-        thumbnail_url = json.optString("poster")
-            .takeIf { it.isNotBlank() }
-            ?.let { "https://image.tmdb.org/t/p/w500$it" }
-            ?: document.select("meta[property=og:image]").attr("content")
-
-        initialized = true
     }
 
     // Episodes: Parse episode list from JSON data
@@ -319,5 +202,33 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
         }
 
         return videoList
+    }
+
+    // Utilities
+    private val animeMenuSelector = ".episodio_controles_players span#lista_ep"
+
+    private fun getRealAnimeUrl(response: Response): String {
+        val url = response.request.url.toString()
+        return if ("/ep/" in url) {
+            response.asJsoup()
+                .selectFirst(animeMenuSelector)!!
+                .parent()!!
+                .attr("abs:href")
+        } else {
+            url
+        }
+    }
+
+    private fun getRealAnimeDoc(document: Document): Document {
+        val menu = document.selectFirst(animeMenuSelector)
+        println("porra getRealAnimeDoc")
+        return if (menu != null) {
+            val animeUrl = menu.parent()!!.attr("abs:href")
+            println("porra getRealAnimeDoc animeUrl")
+            val req = client.newCall(GET(animeUrl, headers)).execute()
+            req.asJsoup()
+        } else {
+            document
+        }
     }
 }
