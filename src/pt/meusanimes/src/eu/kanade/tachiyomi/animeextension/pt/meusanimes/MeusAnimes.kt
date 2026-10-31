@@ -11,11 +11,10 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.bodyString
-import keiyoushi.utils.useAsJsoup
+import keiyoushi.utils.parseAs
 import kotlinx.coroutines.runBlocking
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONObject
 import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
@@ -124,22 +123,31 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
         }
     }
 
-    // Episodes: Parse episode list from JSON data
-    override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = response.useAsJsoup()
-        val json = extractAnimeData(document) ?: return emptyList()
-        val episodes = json.optJSONArray("Episode") ?: return emptyList()
+    // Episodes
+    private fun extractEpisodeData(response: Response): List<Episode> {
+        val animeUrl = getRealAnimeUrl(response)
 
-        return (0 until episodes.length())
-            .map { i ->
-                val obj = episodes.getJSONObject(i)
+        val newHeaders = headers.newBuilder()
+            .set("x-requested-with", "XMLHttpRequest")
+            .set("Referer", baseUrl)
+            .build()
+
+        val anime = client.newCall(GET("$animeUrl/data", newHeaders)).execute().parseAs<Anime>()
+        return anime.data.episodes
+    }
+
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val episodes = extractEpisodeData(response)
+
+        return episodes
+            .map { episode ->
                 SEpisode.create().apply {
-                    name = obj.optString("name")
-                    episode_number = obj.optDouble("episodeNumber").toFloat()
-                    url = "/episodio/${obj.optString("slug")}"
+                    name = "Temporada ${episode.season} x ${episode.number}"
+                    episode_number = episode.number.toFloat()
+                    url = episode.url
+                    scanlator = "Season ${episode.season}"
                 }
-            }
-            .sortedByDescending { it.episode_number }
+            }.reversed()
     }
 
     // Videos: Video list request
