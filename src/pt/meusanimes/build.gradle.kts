@@ -10,7 +10,7 @@ yuzono {
 
     source {
         lang = "pt-BR"
-        baseUrl = "https://meusanimes.vip"
+        baseUrl = "https://meusanimes.club"
     }
 }
 
