@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.annotation.Source
 import keiyoushi.utils.AnimeHttpLegacySource
 import keiyoushi.utils.bodyString
@@ -27,10 +28,26 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", baseUrl)
 
-    // Requests: Popular anime request
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/populares?page=$page", headers)
+    // Popular
+    override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
 
-    // Search anime request
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        val animes = document.select(".top10_ani a")
+            .map { element ->
+                SAnime.create().apply {
+                    title = element.select(".top10_ani_title").text()
+                    url = element.attr("href")
+                    thumbnail_url = element.selectFirst("img")
+                        ?.attr("abs:src")
+                        ?: ""
+                }
+            }
+
+        return AnimesPage(animes, false)
+    }
+
+    // Search
     override fun searchAnimeRequest(
         page: Int,
         query: String,
@@ -40,27 +57,7 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
         return GET("$baseUrl/api/animes?search=$q", headers)
     }
 
-    // Parse Lists: Parse popular anime list
-    override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = response.useAsJsoup()
-        val animes = document.select("div.grid > div > a[href^=\"/anime/\"]")
-            .map { element ->
-                SAnime.create().apply {
-                    title = element.select("h3.text-white").text()
-                    url = element.attr("href")
-                    thumbnail_url = element.selectFirst("img")
-                        ?.attr("abs:src")
-                        ?: ""
-                }
-            }
-
-        // Simple pagination check
-        val hasNextPage = animes.isNotEmpty()
-
-        return AnimesPage(animes, hasNextPage)
-    }
-
-    // Latest updates use same parsing as popular
+    // Latest
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
