@@ -22,7 +22,7 @@ import java.net.URLEncoder
 @Source
 abstract class MeusAnimes : AnimeHttpLegacySource() {
 
-    override val supportsLatest = false
+    override val supportsLatest = true
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -57,12 +57,6 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
         return GET("$baseUrl/api/animes?search=$q", headers)
     }
 
-    // Latest
-    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
-
-    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
-
-    // Parse search results from API
     override fun searchAnimeParse(response: Response): AnimesPage {
         val body = response.bodyString()
         val json = JSONObject(body)
@@ -81,6 +75,30 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
                     ?.let { "https://image.tmdb.org/t/p/w500$it" }
 
                 initialized = true
+            }
+        }
+
+        return AnimesPage(animes, false)
+    }
+
+    // Latest
+    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val doc = response.asJsoup()
+        val episodes = doc.select(".sliderIndex_002 .ultEpsContainerItem a")
+
+        val animes = episodes.map { element ->
+            SAnime.create().apply {
+                val epNum = element.selectFirst(".epNum")!!.text()
+                val epName = element.selectFirst(".epNome")!!.text()
+
+                title = "$epName - $epNum"
+                url = element.attr("href")
+                thumbnail_url = element.selectFirst("img")
+                    ?.attr("abs:src")
+
+                initialized = false
             }
         }
 
