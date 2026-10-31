@@ -54,31 +54,26 @@ abstract class MeusAnimes : AnimeHttpLegacySource() {
         filters: AnimeFilterList,
     ): Request {
         val q = URLEncoder.encode(query, "UTF-8")
-        return GET("$baseUrl/api/animes?search=$q", headers)
+        return GET("$baseUrl/lista-de-animes?page=$page&search=$q", headers)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val body = response.bodyString()
-        val json = JSONObject(body)
+        val document = response.asJsoup()
 
-        val data = json.optJSONArray("data") ?: return AnimesPage(emptyList(), false)
-
-        val animes = (0 until data.length()).map { i ->
-            val obj = data.getJSONObject(i)
-
+        val animes = document.select(".ultAnisContainerItem a").map { element ->
             SAnime.create().apply {
-                title = obj.optString("name")
-                url = "/anime/${obj.optString("slug")}"
-
-                thumbnail_url = obj.optString("poster")
-                    .takeIf { it.isNotBlank() }
-                    ?.let { "https://image.tmdb.org/t/p/w500$it" }
-
+                title = element.selectFirst(".aniNome")?.text() ?: element.attr("title")
+                url = element.attr("href")
+                thumbnail_url = element.selectFirst(".aniImg img")
+                    ?.attr("abs:src")
+                    ?: ""
                 initialized = true
             }
         }
 
-        return AnimesPage(animes, false)
+        val hasNextPage = document.selectFirst(".paginacao a[rel=next]") != null
+
+        return AnimesPage(animes, hasNextPage)
     }
 
     // Latest
